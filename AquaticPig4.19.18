@@ -1,0 +1,264 @@
+---
+title: "AquaticPig4.19.18"
+author: "JReceveur"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: hide
+---
+  
+  ```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width=14, fig.height=10)
+knitr::opts_chunk$set(fig.align="center")
+```
+
+``` {r import, message=FALSE, warning=FALSE,echo=TRUE}
+library(vegan)
+library(MASS)
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(magrittr)
+library(scales)
+library(grid)
+library(reshape2)
+library(phyloseq)
+library(randomForest)
+library(knitr)
+library(ape)
+library(ggpubr)
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#000000","#CC79A7")
+theme_set(theme_bw(base_size = 18)+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()))
+biom=import_biom("C:\\Users\\Joe Receveur\\Documents\\MSU data\\Aquatic Pig\\AquaticPig4.19.biom",parseFunction= parse_taxonomy_greengenes)
+metadata=read.table("C:\\Users\\Joe Receveur\\Documents\\MSU data\\Aquatic Pig\\AquaticPigMeta.txt",header = TRUE)
+tree=import_tree("C:\\Users\\Joe Receveur\\Documents\\MSU data\\Aquatic Pig\\AquaticPigTree.nwk")
+sampdat=sample_data(metadata)
+sample_names(sampdat)=metadata$SampleID
+physeq=merge_phyloseq(biom,sampdat,tree)
+physeq=rarefy_even_depth(physeq, 3000, replace = TRUE, trimOTUs = TRUE, verbose = TRUE)
+physeq <- subset_taxa(physeq, Family != "mitochondria" & Class != "Chloroplast")
+
+
+physeq
+######Single rarefaction 3K
+
+```
+
+#Alpha Diversity
+###Observed Species
+
+```{r}
+plot_richness(physeq, x="DecompStage",color="DecompStage", measures=c("Observed"),)+geom_boxplot(aes(x=DecompStage, y=value, color=DecompStage), alpha=0.05)+ylab("Observed Species")
+
+```
+
+##Simpson Diversity
+```{r}
+plot_richness(physeq, x="DecompStage",color="DecompStage", measures=c("Shannon"),)+geom_boxplot(aes(x=DecompStage, y=value, color=DecompStage), alpha=0.05)+ylab("Shannon Diversity")
+
+plot_richness(physeq, x="DecompStage",color="DecompStage", measures=c("Simpson"),)+geom_boxplot(aes(x=DecompStage, y=value, color=DecompStage), alpha=0.05)+ylab("Simpson Diversity")
+
+```
+
+
+#Taxa Plots
+
+```{r filteringForFamily2}
+
+
+GPr  = transform_sample_counts(physeq, function(x) x / sum(x) ) #transform samples based on relative abundance
+GPrPhylum=tax_glom(GPr, "Phylum")
+PhylumLevel = filter_taxa(GPrPhylum, function(x) mean(x) > 1e-3, TRUE) #filter out any taxa lower tha 0.1%
+GPrFamily=tax_glom(GPr,"Family")
+FamilyLevel = filter_taxa(GPrFamily, function(x) mean(x) > 1e-2, TRUE) #filter out any taxa lower tha 1%
+GPrGenus=tax_glom(GPr,"Genus")
+GenusLevel = filter_taxa(GPrGenus, function(x) mean(x) > 1e-2, TRUE) #filter out any taxa lower tha 1%
+
+```
+
+##Phylum Level
+
+Stars (*) on plot represent unadjusted p values for the test for each taxa (Wilcox or KW test depending on number of groups), pairwise adjusted p values are in the table below (FDR adjustment)
+Table is filtered to only show taxa with a adjusted p value below 0.1
+
+```{r PhylumRA, warning=FALSE}
+df <- psmelt(PhylumLevel)
+df$Abundance=df$Abundance*100
+Trtdata <- ddply(df, c("Phylum", "DecompStage"), summarise,
+                 N    = length(Abundance),
+                 mean = mean(Abundance),
+                 sd   = sd(Abundance),
+                 se   = sd / sqrt(N)
+)
+```
+
+```{r TreatmentPlot2}
+#labels <- c(Ceca = "Ceca", Cloacal_Swab = "Cloacal Swab",Large_Intestine_Tissue="Large Intestine Tissue", Small_Intestine_Contents="Small Intestine Contents",Headgut_Swab="Headgut Swab",Small_Intestine_Tissue="Small Intestine Tissue")
+cdataplot=ggplot(Trtdata, aes(x=DecompStage,y=mean))+geom_bar(aes(fill = Phylum),colour="black", stat="identity")+ facet_grid(~Location)+xlab("Treatment")+ylab("Relative Abundance (> 1%)") + theme(axis.text.x = element_text(angle = 0, hjust = 0.5))+theme(axis.title.x=element_blank())+ theme(axis.text.x = element_text(angle = 45, hjust = 1))+ scale_fill_manual(values=cbPalette)
+cdataplot#+  scale_x_discrete(labels=c("0 hrs", "24 hrs", "48 hrs","72 hrs"))
+#position = "fill"#+geom_errorbar(aes(ymin=mean-se,ymax=mean+se),color="black",width=1)+geom_line(size=1.5,linetype="dashed")+geom_point(size=6)+ylab(
+Means=compare_means(Abundance ~ DecompStage, data = df, 
+                    group.by = "Phylum", p.adjust.method = "fdr")
+#head(Means)
+keeps <- c("Phylum","group1","group2","p.format","p.adj","method","p.signif")
+keeps=Means[keeps]
+#keeps
+
+
+test3 <- list('Phylum'= keeps$Phylum,'group1'=keeps$group1,'group2'= keeps$group2 ,'p'=keeps$p.format,'p.adj'=keeps$p.adj,p.signif=keeps$p.signif,'Method'=keeps$method)
+test3= as.data.frame(test3)
+#test3
+FilteredResults<-test3[!(test3$p.adj>0.1),]            
+FilteredResults
+```
+
+
+##Family Level Relative Abundance
+
+##Relative Abundance by Treatment
+```{r Summarizing2,warning=FALSE}
+df <- psmelt(FamilyLevel)
+df$Abundance=df$Abundance*100
+Trtdata <- ddply(df, c("Family", "Treatment"), summarise,
+                 N    = length(Abundance),
+                 mean = mean(Abundance),
+                 sd   = sd(Abundance),
+                 se   = sd / sqrt(N)
+)
+```
+
+```{r TreatmentPlot}
+cdataplot=ggplot(Trtdata, aes(x=DecompStage,y=mean))+geom_bar(aes(fill = Family),colour="black", stat="identity")+ facet_grid(~Location)+xlab("Treatment")+ylab("Relative Abundance (> 1%)") + theme(axis.text.x = element_text(angle = 0, hjust = 0.5))+theme(axis.title.x=element_blank())+ theme(axis.text.x = element_text(angle = 45, hjust = 1))+ scale_fill_manual(values=cbPalette)
+cdataplot#+  scale_x_discrete(labels=c("0 hrs", "24 hrs", "48 hrs","72 hrs"))
+#position = "fill"#+geom_errorbar(aes(ymin=mean-se,ymax=mean+se),color="black",width=1)+geom_line(size=1.5,linetype="dashed")+geom_point(size=6)+ylab(
+
+#p <- ggbarplot(df, x = "Treatment", y = "Abundance",add = c("mean_se"),#"mean_se"
+#               color = "black", palette = "cbPalette", facet.by="Family",
+#               line.color = "gray", line.size = 0.4, short.panel.labs = TRUE, p.adjust.method = "fdr", fill= "Treatment") + stat_compare_means(aes(group = Treatment), label = "..p.signif..",label.y = 7) 
+
+#p+ theme(axis.text.x = element_text(angle = 45, hjust = 1))+ylab("Relative abundance (> 1%)")+ theme(legend.position="none")
+cdataplot
+Means=compare_means(Abundance ~ DecompStage, data = df, 
+                    group.by = "Family", p.adjust.method = "fdr")
+#head(Means)
+keeps <- c("Family","group1","group2","p.format","p.adj","method","p.signif")
+keeps=Means[keeps]
+#keeps
+
+
+test3 <- list('Family'= keeps$Family,'group1'=keeps$group1,'group2'= keeps$group2 ,'p'=keeps$p.format,'p.adj'=keeps$p.adj,p.signif=keeps$p.signif,'Method'=keeps$method)
+test3= as.data.frame(test3)
+#test3
+FilteredResults<-test3[!(test3$p.adj>0.1),]            
+FilteredResults
+```
+
+```{r Summarizing2,warning=FALSE}
+df <- psmelt(GenusLevel)
+df$Abundance=df$Abundance*100
+Trtdata <- ddply(df, c("Genus", "Treatment"), summarise,
+                 N    = length(Abundance),
+                 mean = mean(Abundance),
+                 sd   = sd(Abundance),
+                 se   = sd / sqrt(N)
+)
+```
+
+```{r TreatmentPlot}
+cdataplot=ggplot(Trtdata, aes(x=DecompStage,y=mean))+geom_bar(aes(fill = Genus),colour="black", stat="identity")+ facet_grid(~Location)+xlab("Treatment")+ylab("Relative Abundance (> 1%)") + theme(axis.text.x = element_text(angle = 0, hjust = 0.5))+theme(axis.title.x=element_blank())+ theme(axis.text.x = element_text(angle = 45, hjust = 1))+ scale_fill_manual(values=cbPalette)
+cdataplot#+  scale_x_discrete(labels=c("0 hrs", "24 hrs", "48 hrs","72 hrs"))
+#position = "fill"#+geom_errorbar(aes(ymin=mean-se,ymax=mean+se),color="black",width=1)+geom_line(size=1.5,linetype="dashed")+geom_point(size=6)+ylab(
+
+#p <- ggbarplot(df, x = "Treatment", y = "Abundance",add = c("mean_se"),#"mean_se"
+#               color = "black", palette = "cbPalette", facet.by="Family",
+#               line.color = "gray", line.size = 0.4, short.panel.labs = TRUE, p.adjust.method = "fdr", fill= "Treatment") + stat_compare_means(aes(group = Treatment), label = "..p.signif..",label.y = 7) 
+
+#p+ theme(axis.text.x = element_text(angle = 45, hjust = 1))+ylab("Relative abundance (> 1%)")+ theme(legend.position="none")
+cdataplot
+Means=compare_means(Abundance ~ DecompStage, data = df, 
+                    group.by = "Genus", p.adjust.method = "fdr")
+#head(Means)
+keeps <- c("Genus","group1","group2","p.format","p.adj","method","p.signif")
+keeps=Means[keeps]
+#keeps
+
+
+test3 <- list('Genus'= keeps$Genus,'group1'=keeps$group1,'group2'= keeps$group2 ,'p'=keeps$p.format,'p.adj'=keeps$p.adj,p.signif=keeps$p.signif,'Method'=keeps$method)
+test3= as.data.frame(test3)
+#test3
+FilteredResults<-test3[!(test3$p.adj>0.1),]            
+FilteredResults
+```
+
+
+#Ordinations
+-All ordinations here were conducted using Jensen–Shannon divergence (for weighted unifrac see QIIME outputs)
+
+-Ellipses represent 95% CI for the mean of each group
+
+##PCoA 
+###By Treatment
+```{r PCoA, warning=FALSE}
+ord=ordinate(physeq,"PCoA", "wunifrac")
+ordplot=plot_ordination(physeq, ord,"samples", color="DecompStage")+geom_point(size=4)+scale_colour_manual(values=cbPalette)+scale_fill_manual(values=cbPalette)
+ordplot+ stat_ellipse(type= "norm",geom = "polygon", alpha = 1/4, aes(fill = DecompStage))+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())#+ theme(legend.justification=c(1,0), legend.position=c(1,0))
+
+```
+
+```{r PCoA2, warning=FALSE}
+ord=ordinate(physeq,"PCoA", "wunifrac")
+ordplot=plot_ordination(physeq, ord,"samples", color="DecompStage")+geom_point(size=4)+scale_colour_manual(values=cbPalette)+scale_fill_manual(values=cbPalette)
+ordplot+ stat_ellipse(type= "norm",geom = "polygon", alpha = 1/4, aes(fill = DecompStage))+ theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+facet_wrap(~Location)#+ theme(legend.justification=c(1,0), legend.position=c(1,0))
+
+```
+
+
+
+#PERMANOVAs
+
+##Homogenieity of Multivariate Dispersions
+```{r}
+GPdist=phyloseq::distance(physeq, "wunifrac")
+beta=betadisper(GPdist, sample_data(physeq)$DecompStage)
+permutest(beta)
+boxplot(beta)
+```
+
+##DecompStage x Location
+``` {r PERMANOVAs,warning=FALSE}
+GPdist=phyloseq::distance(physeq, "wunifrac")
+#MONMDS= ordinate(physeq, "NMDS",GPdist)
+```
+
+```{r}
+adonis(GPdist ~ DecompStage*Location, as(sample_data(physeq), "data.frame"))
+```
+
+
+#Random Forest
+##By DecompStage
+```{r Forest1}
+ForestData=GenusLevel#Change this one so you dont have to rewrite all variables
+predictors=t(otu_table(ForestData))
+dim(predictors)
+response <- as.factor(sample_data(ForestData)$DecompStage)
+rf.data <- data.frame(response, predictors)
+MozzieForest <- randomForest(response~., data = rf.data, ntree = 1000)
+print(MozzieForest)#returns overall Random Forest results
+imp <- importance(MozzieForest)#all the steps that are imp or imp. are building a dataframe that contains info about the taxa used by the Random Forest testto classify treatment 
+imp <- data.frame(predictors = rownames(imp), imp)
+imp.sort <- arrange(imp, desc(MeanDecreaseGini))
+imp.sort$predictors <- factor(imp.sort$predictors, levels = imp.sort$predictors)
+imp.20 <- imp.sort[1:20, ]
+ggplot(imp.20, aes(x = predictors, y = MeanDecreaseGini)) +
+  geom_bar(stat = "identity", fill = "indianred") +
+  coord_flip() +
+  ggtitle("Most important OTUs for classifying  samples\n by Decomp Stage")#\n in a string tells it to start a new line
+imp.20$MeanDecreaseGini
+otunames <- imp.20$predictors
+r <- rownames(tax_table(ForestData)) %in% otunames
+kable(tax_table(ForestData)[r, ])#returns a list of the most important predictors for Random Forest Classification
+```
+
